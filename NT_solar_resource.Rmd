@@ -1,0 +1,145 @@
+---
+title: "NY Solar Resource Data"
+author: "Emmanuel Messori"
+date: "12/09/2021"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+The solar resource data is available on the US open data website. To retrieve it we need an access key, freely available on [demand](https://developer.nrel.gov/signup/).
+
+In particolar we'll work with these output fields:
+
+* The Average Direct Normal Irradiance(`avg_dni`): Direct Normal Irradiance is the amount of solar radiation a surface receives per unit area.
+* The Average Tilt at Latitude (`avg_lat_tilt`): Tilt at Latitude is the amount of radiation a surface receives per unit area that doesn't arrive on a direct path from the sun.
+* The Average Global Horizontal Irradiance(`avg_ghi`): Global Horizontal Irradiance is the total amount of shortwave radiation a surface horizontal to the ground receives from above.
+
+
+## API connection
+
+```{r}
+api_key <-"di7U1kMqN1orvvSS2efbg8tmprjRPQU2bvPnd0bd"
+
+```
+
+The next step is to determine the URL and the parameters to query the API. More info on the official [documentation](https://developer.nrel.gov/docs/solar/solar-resource-v1/).
+
+```{r}
+url <- "https://developer.nrel.gov/api/solar/solar_resource/v1.json"
+
+#NY latitude
+lat <- 41
+#NY longitutude
+lon <- -75
+
+params <- list(api_key = api_key, lat = lat, lon = lon)
+```
+
+## Retrieving the data
+
+We will define a function to retrieve the information through the API:
+
+```{r}
+library(httr)
+
+solar_data_api <- function(u = url, q = params) {
+  
+  response <- GET(u, query = q)
+  
+  print(status_code(response))
+  
+  print(http_type(response))
+  
+  if (http_error(response)) {
+    print(http_status(response))
+    stop("Something wrong", .call = FALSE)
+  }
+  
+  if (http_type(response) != "application/json") {
+stop("API did not return json", call. = FALSE)
+}
+  json_content <- content(response, "text")
+  
+  data <- jsonlite::fromJSON(json_content)
+  
+  data
+}
+```
+
+Now we can retrieve the data :
+
+```{r}
+data <- solar_data_api()
+```
+```{r}
+str(data)
+```
+The resulting data is a nested list of lists. The 6 main lists contain information about the API, the call and the output.
+
+
+## Processing the API response
+
+We are interested in the information contained in the nested list `outputs`. This list contains in turn three lists of data:
+
+```{r}
+str(data$output)
+```
+
+We will focus on the monthly values. Now we have to convert these lists into a dataframe.
+
+```{r}
+
+
+values <- data$outputs
+avg_dni <- unlist(values$avg_dni$monthly)
+avg_ghi <- unlist(values$avg_ghi$monthly)
+avg_lat_tilt <- unlist(values$avg_lat_tilt$monthly)
+month <- month.abb
+
+ny_sd <- dplyr::bind_cols(month = month, avg_dni = avg_dni, avg_ghi = avg_ghi,
+                 avg_lat_tilt = avg_lat_tilt)
+
+
+ny_sd
+```
+
+Another approach of treating the raw data consist of  simplifying the complex list and restructuring it into the desired output :
+
+
+```{r}
+#1. Unlist the data 
+values <- unlist(values)
+
+#2. Transform the resulting vector into a matrix of 13 rows (12 monthly values + 1 annual value)
+mat <- matrix(values, nrow = 13)
+
+#3. Convert the matrix into a dataframe
+solar_data <- as.data.frame(mat)
+colnames(solar_data) <- c("avg_dni", "avg_ghi", "avg_lat_tilt")
+
+#4. Removing the annual values:
+solar_data <- solar_data[-1,]
+rownames(solar_data)<-NULL
+
+
+```
+
+
+## Visualising the data
+
+```{r}
+library(tidyverse)
+
+theme_set(theme_bw())
+
+ny_sd %>% pivot_longer(cols = 2:4, names_to = "measure") %>% ggplot(aes(factor(month, levels = month.abb), value, group= measure, color = measure)) + geom_line() + geom_point() + labs(title = "New York Seasonal Solar Irradiation", x="Month", y="Value") + scale_color_manual(name="Measure Type",labels=c("Average Direct Irradiation", "Average Horizonal Irradiance", "Average Tilt at Latitude"), values=c("orange3", "orangered3", "orangered4" ))
+
+
+```
+
+
